@@ -239,7 +239,7 @@ def create_invoice_record(
     connection = get_connection()
 
     try:
-        is_inr = invoice.currency.upper() == "INR"
+        is_inr = (invoice.currency or "").upper() == "INR"
 
         cursor = connection.execute(
             """
@@ -315,7 +315,7 @@ def save_invoice_items(invoice_id, items, currency):
     connection = get_connection()
 
     try:
-        is_inr = currency.upper() == "INR"
+        is_inr = (currency or "").upper() == "INR"
 
         for item in items:
             connection.execute(
