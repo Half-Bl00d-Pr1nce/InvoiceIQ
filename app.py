@@ -526,6 +526,20 @@ st.markdown(
     .processing-meta strong {
         color: #101D32 !important;
     }
+    
+    /* Improve Streamlit success and status message readability */
+
+    [data-testid="stAlert"] p,
+    [data-testid="stAlert"] div,
+    [data-testid="stAlert"] span {
+        color: #176B45 !important;
+        font-weight: 600 !important;
+    }
+
+    [data-testid="stAlert"][data-kind="success"] {
+        background-color: #E8F6EE !important;
+        border: 1px solid #BCE5CC !important;
+    }
 
     </style>
     """,
@@ -815,41 +829,44 @@ def render_extracted_fields(invoice_data):
 
     if isinstance(evidence, dict):
 
-        st.markdown("**Extraction Evidence**")
+        with st.expander(
+            f"View Extraction Evidence ({len(evidence)} fields)",
+            expanded=False,
+        ):
 
-        evidence_rows = []
+            evidence_rows = []
 
-        for key, value in evidence.items():
+            for key, value in evidence.items():
 
-            # Some extraction outputs wrap the actual
-            # evidence in another nested object.
+                # Some extraction outputs wrap the actual
+                # evidence in another nested object.
 
-            if isinstance(value, dict):
+                if isinstance(value, dict):
 
-                for nested_key, nested_value in value.items():
+                    for nested_key, nested_value in value.items():
+
+                        evidence_rows.append(
+                            [
+                                nested_key.replace("_", " ").title(),
+                                format_display_value(nested_value),
+                            ]
+                        )
+
+                else:
 
                     evidence_rows.append(
                         [
-                            nested_key.replace("_", " ").title(),
-                            format_display_value(nested_value),
+                            key.replace("_", " ").title(),
+                            format_display_value(value),
                         ]
                     )
 
-            else:
+            if evidence_rows:
 
-                evidence_rows.append(
-                    [
-                        key.replace("_", " ").title(),
-                        format_display_value(value),
-                    ]
+                render_results_table(
+                    ["Evidence Field", "Value"],
+                    evidence_rows,
                 )
-
-        if evidence_rows:
-
-            render_results_table(
-                ["Evidence Field", "Value"],
-                evidence_rows,
-            )
 
     # ----------------------------------------------
     # REMAINING INVOICE FIELDS
