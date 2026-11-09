@@ -411,7 +411,7 @@ st.markdown(
     .iq-table-wrap {
         width: 100%;
         overflow-x: auto;
-        border: 1px solid #E1E7EF;
+        border: 1px solid #DCE3EC;
         border-radius: 10px;
         background: #FFFFFF;
         margin: 10px 0 16px 0;
@@ -419,9 +419,11 @@ st.markdown(
 
     .iq-table {
         width: 100%;
-        border-collapse: collapse;
+        border-collapse: separate;
+        border-spacing: 0;
         font-size: 13px;
         color: #263449 !important;
+        border: none;
     }
 
     .iq-table th {
@@ -453,6 +455,31 @@ st.markdown(
         background: #F8FAFC;
     }
 
+    .iq-table th:first-child {
+        border-top-left-radius: 9px;
+    }
+
+    .iq-table th:last-child {
+        border-top-right-radius: 9px;
+    }
+
+    .iq-table tr:last-child td:first-child {
+        border-bottom-left-radius: 9px;
+    }
+
+    .iq-table tr:last-child td:last-child {
+        border-bottom-right-radius: 9px;
+    }
+
+    .iq-table th,
+    .iq-table td {
+        border-right: 1px solid #E1E7EF;
+    }
+
+    .iq-table th:last-child,
+    .iq-table td:last-child {
+        border-right: none;
+    }
     /* Validation badges */
 
     .iq-status {
