@@ -1,0 +1,4 @@
+vendor_id,vendor_name,gstin,status,bank_ref
+V001,Chennai Industrial Supplies,33ABCDE1234F1Z5,ACTIVE,BANKREF-001
+V002,Metro Electrical Traders,33BCDEF2345G1Z6,ACTIVE,BANKREF-002
+V003,Harbour Engineering Supplies,33DEFGH4567J1Z8,ACTIVE,BANKREF-003

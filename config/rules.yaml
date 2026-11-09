@@ -1,0 +1,33 @@
+company:
+  name: InvoiceIQ Demo Company
+  currency: INR
+
+invoice:
+  allowed_formats:
+    - pdf
+  require_invoice_number: true
+  require_invoice_date: true
+  require_vendor: true
+  require_total: true
+
+matching:
+  explicit_po_match_required_for_approval: true
+  semantic_match_auto_accept_threshold: 0.90
+  semantic_match_review_threshold: 0.75
+
+tolerance:
+  amount_percentage: 2.0
+  amount_absolute_paise: 10000
+
+duplicate_detection:
+  check_file_hash: true
+  check_vendor_invoice_number: true
+  check_vendor_date_amount: true
+
+decision:
+  duplicate: REJECTED
+  vendor_mismatch: REJECTED
+  missing_critical_field: PENDING_REVIEW
+  ambiguous_po_match: PENDING_REVIEW
+  amount_mismatch: PENDING_REVIEW
+  uncertain_extraction: PENDING_REVIEW
