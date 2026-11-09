@@ -1,6 +1,9 @@
 
 import re
-import ollama
+from src.extraction.llm_client import (
+    generate_with_ollama,
+    generate_with_groq
+)
 
 from src.extraction.schemas import InvoiceData
 from src.extraction.prompts import (
@@ -58,37 +61,54 @@ def clean_extracted_items(invoice: InvoiceData) -> InvoiceData:
     return invoice
 
 
-def extract_invoice_data(invoice_text: str) -> InvoiceData:
-
+def extract_invoice_data_with_backend(invoice_text: str):
     if not invoice_text or not invoice_text.strip():
         raise ValueError("Invoice text is empty.")
 
-    response = ollama.chat(
-        model="qwen2.5:1.5b",
-        messages=[
-            {
-                "role": "system",
-                "content": SYSTEM_PROMPT
-            },
-            {
-                "role": "user",
-                "content": USER_PROMPT_TEMPLATE.format(
-                    invoice_text=invoice_text
-                )
-            }
-        ],
-        format=InvoiceData.model_json_schema(),
-        options={
-            "temperature": 0
-        }
+    user_prompt = USER_PROMPT_TEMPLATE.format(
+        invoice_text=invoice_text
     )
 
-    extracted_json = response.message.content
+    schema = InvoiceData.model_json_schema()
 
-    # Validate the LLM response using Pydantic
-    invoice = InvoiceData.model_validate_json(extracted_json)
+    # First attempt: local Ollama
+    try:
+        extracted_json = generate_with_ollama(
+            SYSTEM_PROMPT,
+            user_prompt,
+            schema
+        )
 
-    # Clean common extraction mistakes deterministically
+        invoice = InvoiceData.model_validate_json(extracted_json)
+        backend_used = "ollama"
+
+    except Exception as ollama_error:
+        # Second attempt: Groq
+        try:
+            extracted_json = generate_with_groq(
+                SYSTEM_PROMPT,
+                user_prompt,
+                schema
+            )
+
+            invoice = InvoiceData.model_validate_json(extracted_json)
+            backend_used = "groq"
+
+        except Exception as groq_error:
+            raise RuntimeError(
+                f"Invoice extraction failed with both Ollama and Groq.\n"
+                f"Ollama error: {ollama_error}\n"
+                f"Groq error: {groq_error}"
+            ) from groq_error
+
     invoice = clean_extracted_items(invoice)
+
+    return invoice, backend_used
+
+
+def extract_invoice_data(invoice_text: str) -> InvoiceData:
+    """Backward-compatible function used by the existing pipeline."""
+
+    invoice, _ = extract_invoice_data_with_backend(invoice_text)
 
     return invoice

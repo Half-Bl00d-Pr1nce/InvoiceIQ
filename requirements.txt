@@ -8,3 +8,5 @@ python-dotenv
 pyyaml
 plotly
 pytest
+ollama
+requests
