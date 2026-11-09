@@ -10,6 +10,17 @@ import pandas as pd
 from src.pipeline import process_invoice
 from src.database.repository import get_dashboard_data
 
+from src.database.db import initialize_database, migrate_database
+from src.database.repository import load_reference_data
+
+@st.cache_resource
+def setup_app_database():
+    initialize_database()
+    migrate_database()
+    load_reference_data()
+
+setup_app_database()
+
 
 # --------------------------------------------------
 # PAGE CONFIGURATION
