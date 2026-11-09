@@ -21,6 +21,7 @@ from src.database.repository import (
     save_validation_results,
     save_processing_log,
     update_invoice_status,
+    get_reference_data,
 )
 
 def aggregate_financial_status(financial_validation):
@@ -99,17 +100,29 @@ def process_invoice(pdf_path):
     invoice_data = extract_invoice_data(extracted_text)
 
     # --------------------------------------------------
-    # 3. LOAD REFERENCE DATA
+    # 3. LOAD REFERENCE DATA FROM SQLITE
     # --------------------------------------------------
 
-    project_root = Path(__file__).resolve().parent.parent
+    reference_data = get_reference_data()
 
-    vendors_df = pd.read_csv(
-        project_root / "data" / "vendors.csv"
+    vendors_df = pd.DataFrame(reference_data["vendors"])
+
+    purchase_orders_df = pd.DataFrame(
+        reference_data["purchase_orders"]
     )
 
-    purchase_orders_df = pd.read_csv(
-        project_root / "data" / "purchase_orders.csv"
+    po_items_df = pd.DataFrame(
+        reference_data["po_items"]
+    )
+
+    # Add PO header information to each PO line item.
+    # This is needed for implicit PO matching.
+    po_items_df = po_items_df.merge(
+        purchase_orders_df[
+            ["po_id", "vendor_id", "status", "currency"]
+        ],
+        on="po_id",
+        how="left",
     )
 
     # --------------------------------------------------
@@ -187,7 +200,7 @@ def process_invoice(pdf_path):
         implicit_po_validation = find_implicit_po_candidates(
             vendor_id,
             invoice_data.items,
-            purchase_orders_df
+            po_items_df,
         )
 
         # A candidate is not a confirmed PO.
@@ -244,8 +257,8 @@ def process_invoice(pdf_path):
 
     # Verify invoice tax against the tax rate authorised by the matched PO.
     if po_validation["status"] == "PASS" and po_validation.get("po_id"):
-        matched_po_items = purchase_orders_df[
-            purchase_orders_df["po_id"].astype(str).str.strip().str.upper()
+        matched_po_items = po_items_df[
+            po_items_df["po_id"].astype(str).str.strip().str.upper()
             == str(po_validation["po_id"]).strip().upper()
         ]
 
@@ -313,7 +326,7 @@ def process_invoice(pdf_path):
         item_reconciliation = reconcile_invoice_items(
         invoice_data.items,
         po_validation["po_id"],
-        purchase_orders_df,
+        po_items_df,
         invoice_id=invoice_id,
         tax_treatment=invoice_data.tax_treatment
     )

@@ -129,6 +129,164 @@ def load_reference_data():
     finally:
         connection.close()
 
+def get_reference_data():
+    """Retrieve vendors, purchase orders and PO items for the dashboard."""
+
+    connection = get_connection()
+
+    try:
+        vendors = connection.execute(
+            """
+            SELECT vendor_id, vendor_name, gstin, status, bank_ref
+            FROM vendors
+            ORDER BY vendor_id
+            """
+        ).fetchall()
+
+        purchase_orders = connection.execute(
+            """
+            SELECT
+                po.po_id,
+                po.vendor_id,
+                v.vendor_name,
+                po.po_date,
+                po.status,
+                po.currency
+            FROM purchase_orders po
+            LEFT JOIN vendors v
+                ON po.vendor_id = v.vendor_id
+            ORDER BY po.po_id
+            """
+        ).fetchall()
+
+        po_items = connection.execute(
+            """
+            SELECT
+                po_item_id,
+                po_id,
+                item_code,
+                description,
+                quantity,
+                unit_price_paise,
+                tax_rate
+            FROM po_items
+            ORDER BY po_id, po_item_id
+            """
+        ).fetchall()
+
+        return {
+            "vendors": [dict(row) for row in vendors],
+            "purchase_orders": [dict(row) for row in purchase_orders],
+            "po_items": [dict(row) for row in po_items],
+        }
+
+    finally:
+        connection.close()
+
+
+def import_reference_data(vendor_rows, po_rows):
+    """
+    Insert or update uploaded vendor and PO reference records.
+
+    Existing records and invoice history are preserved.
+    """
+
+    connection = get_connection()
+
+    try:
+        # 1. Insert or update vendors first.
+        for vendor in vendor_rows:
+            connection.execute(
+                """
+                INSERT INTO vendors
+                (vendor_id, vendor_name, gstin, status, bank_ref)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(vendor_id) DO UPDATE SET
+                    vendor_name = excluded.vendor_name,
+                    gstin = excluded.gstin,
+                    status = excluded.status,
+                    bank_ref = excluded.bank_ref
+                """,
+                (
+                    vendor["vendor_id"],
+                    vendor["vendor_name"],
+                    vendor["gstin"],
+                    vendor["status"],
+                    vendor["bank_ref"],
+                ),
+            )
+
+        # 2. Insert or update purchase orders and their items.
+        item_counters = {}
+
+        for order in po_rows:
+            po_id = order["po_id"]
+
+            connection.execute(
+                """
+                INSERT INTO purchase_orders
+                (po_id, vendor_id, po_date, status, currency)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(po_id) DO UPDATE SET
+                    vendor_id = excluded.vendor_id,
+                    po_date = excluded.po_date,
+                    status = excluded.status,
+                    currency = excluded.currency
+                """,
+                (
+                    po_id,
+                    order["vendor_id"],
+                    order["po_date"],
+                    order["status"],
+                    order["currency"],
+                ),
+            )
+
+            item_counters[po_id] = item_counters.get(po_id, 0) + 1
+
+            po_item_id = (
+                f"{po_id}-LINE-{item_counters[po_id]:04d}"
+            )
+
+            connection.execute(
+                """
+                INSERT INTO po_items
+                (
+                    po_item_id, po_id, item_code, description,
+                    quantity, unit_price_paise, tax_rate
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(po_item_id) DO UPDATE SET
+                    item_code = excluded.item_code,
+                    description = excluded.description,
+                    quantity = excluded.quantity,
+                    unit_price_paise = excluded.unit_price_paise,
+                    tax_rate = excluded.tax_rate
+                """,
+                (
+                    po_item_id,
+                    po_id,
+                    order["item_code"],
+                    order["description"],
+                    float(order["quantity"]),
+                    int(order["unit_price_paise"]),
+                    float(order["tax_rate"]),
+                ),
+            )
+
+        connection.commit()
+
+        return {
+            "vendors_imported": len(vendor_rows),
+            "po_rows_imported": len(po_rows),
+        }
+
+    except Exception:
+        connection.rollback()
+        raise
+
+    finally:
+        connection.close()
 
 def get_historical_po_billing(po_id, exclude_invoice_id=None):
     """

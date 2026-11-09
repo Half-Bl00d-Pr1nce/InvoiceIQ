@@ -8,7 +8,11 @@ import streamlit as st
 import pandas as pd
 
 from src.pipeline import process_invoice
-from src.database.repository import get_dashboard_data
+from src.database.repository import (
+    get_dashboard_data,
+    get_reference_data,
+    import_reference_data,
+)
 
 from src.database.db import initialize_database, migrate_database
 from src.database.repository import load_reference_data
@@ -1076,7 +1080,7 @@ with st.sidebar:
 
     page = st.radio(
         "NAVIGATION",
-        ["Dashboard", "Process Invoice"],
+        ["Dashboard", "Process Invoice", "Manage Database"],
         label_visibility="collapsed",
     )
 
@@ -1823,3 +1827,458 @@ elif page == "Process Invoice":
                 explanation,
                 decision_data,
             )
+
+# --------------------------------------------------
+# MANAGE DATABASE
+# --------------------------------------------------
+
+elif page == "Manage Database":
+
+    render_html('<div class="main-title">Manage Database</div>')
+
+    render_html(
+        '<div class="subtitle">'
+        'Upload, validate and manage vendor and purchase order reference data.'
+        '</div>'
+    )
+
+    # ----------------------------------------------
+    # CURRENT DATABASE OVERVIEW
+    # ----------------------------------------------
+
+    reference_data = get_reference_data()
+
+    vendors_existing = reference_data["vendors"]
+    pos_existing = reference_data["purchase_orders"]
+    items_existing = reference_data["po_items"]
+
+    metric1, metric2, metric3 = st.columns(3)
+
+    with metric1:
+        st.metric("Registered Vendors", len(vendors_existing))
+
+    with metric2:
+        st.metric("Purchase Orders", len(pos_existing))
+
+    with metric3:
+        st.metric("PO Line Items", len(items_existing))
+
+    st.divider()
+
+    # ----------------------------------------------
+    # CSV UPLOAD
+    # ----------------------------------------------
+
+    st.markdown("### Upload Reference Data")
+
+    vendor_file = st.file_uploader(
+        "Upload Vendor Master CSV",
+        type=["csv"],
+        key="vendor_csv_upload",
+    )
+
+    po_file = st.file_uploader(
+        "Upload Purchase Order CSV",
+        type=["csv"],
+        key="po_csv_upload",
+    )
+
+    vendor_required = [
+        "vendor_id",
+        "vendor_name",
+        "gstin",
+        "status",
+        "bank_ref",
+    ]
+
+    po_required = [
+        "po_id",
+        "vendor_id",
+        "po_date",
+        "status",
+        "currency",
+        "item_code",
+        "description",
+        "quantity",
+        "unit_price_paise",
+        "tax_rate",
+    ]
+
+    vendor_df = None
+    po_df = None
+    errors = []
+
+    # ----------------------------------------------
+    # READ AND VALIDATE VENDOR CSV
+    # ----------------------------------------------
+
+    if vendor_file:
+
+        try:
+            vendor_df = pd.read_csv(vendor_file)
+            vendor_df.columns = vendor_df.columns.str.strip()
+
+            missing = [
+                col for col in vendor_required
+                if col not in vendor_df.columns
+            ]
+
+            if missing:
+                errors.append(
+                    f"Vendor CSV is missing columns: {missing}"
+                )
+
+            else:
+
+                vendor_df = vendor_df[vendor_required].copy()
+
+                for col in vendor_required:
+                    vendor_df[col] = (
+                        vendor_df[col]
+                        .astype("string")
+                        .str.strip()
+                    )
+
+                if vendor_df.empty:
+                    errors.append("Vendor CSV contains no records.")
+
+                if vendor_df["vendor_id"].isna().any() or (
+                    vendor_df["vendor_id"] == ""
+                ).any():
+                    errors.append("Vendor ID cannot be empty.")
+
+                if vendor_df["vendor_name"].isna().any() or (
+                    vendor_df["vendor_name"] == ""
+                ).any():
+                    errors.append("Vendor name cannot be empty.")
+
+                if vendor_df["status"].isna().any():
+                    errors.append("Vendor status cannot be empty.")
+
+                valid_statuses = ["ACTIVE", "INACTIVE", "BLOCKED"]
+
+                invalid_statuses = (
+                    ~vendor_df["status"].str.upper().isin(valid_statuses)
+                )
+
+                if invalid_statuses.any():
+                    errors.append(
+                        "Vendor status must be ACTIVE, INACTIVE or BLOCKED."
+                    )
+
+                if vendor_df["vendor_id"].duplicated().any():
+                    errors.append(
+                        "Duplicate vendor IDs found in the uploaded CSV."
+                    )
+
+                st.markdown("**Vendor Data Preview**")
+                st.dataframe(
+                    vendor_df,
+                    use_container_width=True,
+                    hide_index=True,
+                )
+
+        except Exception as e:
+            errors.append(f"Could not read Vendor CSV: {e}")
+
+    # ----------------------------------------------
+    # READ AND VALIDATE PURCHASE ORDER CSV
+    # ----------------------------------------------
+
+    if po_file:
+
+        try:
+            po_df = pd.read_csv(po_file)
+            po_df.columns = po_df.columns.str.strip()
+
+            missing = [
+                col for col in po_required
+                if col not in po_df.columns
+            ]
+
+            if missing:
+                errors.append(
+                    f"Purchase Order CSV is missing columns: {missing}"
+                )
+
+            else:
+
+                po_df = po_df[po_required].copy()
+
+                text_columns = [
+                    "po_id",
+                    "vendor_id",
+                    "po_date",
+                    "status",
+                    "currency",
+                    "item_code",
+                    "description",
+                ]
+
+                for col in text_columns:
+                    po_df[col] = (
+                        po_df[col]
+                        .astype("string")
+                        .str.strip()
+                    )
+
+                if po_df.empty:
+                    errors.append(
+                        "Purchase Order CSV contains no records."
+                    )
+
+                for col in [
+                    "po_id",
+                    "vendor_id",
+                    "po_date",
+                    "status",
+                    "currency",
+                    "description",
+                ]:
+                    if po_df[col].isna().any() or (
+                        po_df[col] == ""
+                    ).any():
+                        errors.append(
+                            f"Purchase Order field '{col}' cannot be empty."
+                        )
+
+                for col in [
+                    "quantity",
+                    "unit_price_paise",
+                    "tax_rate",
+                ]:
+                    po_df[col] = pd.to_numeric(
+                        po_df[col],
+                        errors="coerce",
+                    )
+
+                    if po_df[col].isna().any():
+                        errors.append(
+                            f"Invalid numeric values in '{col}'."
+                        )
+
+                if not po_df.empty:
+
+                    if (
+                        po_df["quantity"].notna().all()
+                        and (po_df["quantity"] <= 0).any()
+                    ):
+                        errors.append(
+                            "PO quantity must be greater than zero."
+                        )
+
+                    if (
+                        po_df["unit_price_paise"].notna().all()
+                        and (
+                            po_df["unit_price_paise"] < 0
+                        ).any()
+                    ):
+                        errors.append(
+                            "PO unit price cannot be negative."
+                        )
+
+                    if (
+                        po_df["unit_price_paise"].notna().all()
+                        and (
+                            po_df["unit_price_paise"] % 1 != 0
+                        ).any()
+                    ):
+                        errors.append(
+                            "PO unit_price_paise must contain whole numbers."
+                        )
+
+                    if (
+                        po_df["tax_rate"].notna().all()
+                        and (po_df["tax_rate"] < 0).any()
+                    ):
+                        errors.append(
+                            "PO tax rate cannot be negative."
+                        )
+
+                st.markdown("**Purchase Order Data Preview**")
+
+                st.dataframe(
+                    po_df,
+                    use_container_width=True,
+                    hide_index=True,
+                )
+
+        except Exception as e:
+            errors.append(f"Could not read Purchase Order CSV: {e}")
+
+    # ----------------------------------------------
+    # CHECK VENDOR REFERENCES
+    # ----------------------------------------------
+
+    if po_df is not None and "vendor_id" in po_df.columns:
+
+        existing_vendor_ids = {
+            str(v["vendor_id"])
+            for v in vendors_existing
+        }
+
+        uploaded_vendor_ids = set()
+
+        if vendor_df is not None and "vendor_id" in vendor_df.columns:
+            uploaded_vendor_ids = set(
+                vendor_df["vendor_id"].dropna().astype(str)
+            )
+
+        available_vendor_ids = (
+            existing_vendor_ids | uploaded_vendor_ids
+        )
+
+        unknown_vendors = (
+            set(po_df["vendor_id"].dropna().astype(str))
+            - available_vendor_ids
+        )
+
+        if unknown_vendors:
+            errors.append(
+                "These PO vendor IDs are not present in the "
+                f"database or uploaded vendor CSV: {sorted(unknown_vendors)}"
+            )
+
+    # ----------------------------------------------
+    # IMPORT CONFIRMATION
+    # ----------------------------------------------
+
+    if vendor_file or po_file:
+
+        st.divider()
+
+        if errors:
+
+            st.error("Please fix the following issues before importing:")
+
+            for error in errors:
+                st.write(f"- {error}")
+
+        else:
+
+            st.success("CSV validation completed successfully.")
+
+            vendor_count = (
+                len(vendor_df) if vendor_df is not None else 0
+            )
+
+            po_count = (
+                len(po_df) if po_df is not None else 0
+            )
+
+            st.info(
+                f"Ready to import {vendor_count} vendor records "
+                f"and {po_count} PO line items."
+            )
+
+            confirm_import = st.checkbox(
+                "I have reviewed the data and confirm this import."
+            )
+
+            if st.button(
+                "Import Reference Data",
+                type="primary",
+                disabled=not confirm_import,
+            ):
+
+                try:
+
+                    def clean_value(value):
+                        if pd.isna(value):
+                            return None
+                        return value
+
+                    vendor_rows = (
+                        [
+                            {
+                                key: clean_value(value)
+                                for key, value in row.items()
+                            }
+                            for row in vendor_df.to_dict("records")
+                        ]
+                        if vendor_df is not None
+                        else []
+                    )
+
+                    po_rows = (
+                        [
+                            {
+                                key: clean_value(value)
+                                for key, value in row.items()
+                            }
+                            for row in po_df.to_dict("records")
+                        ]
+                        if po_df is not None
+                        else []
+                    )
+
+                    result = import_reference_data(
+                        vendor_rows,
+                        po_rows,
+                    )
+
+                    st.success(
+                        "Reference data imported successfully!"
+                    )
+
+                    st.write(
+                        f"Vendors imported: {result['vendors_imported']}"
+                    )
+
+                    st.write(
+                        f"PO line items imported: "
+                        f"{result['po_rows_imported']}"
+                    )
+
+                    st.rerun()
+
+                except Exception as e:
+
+                    st.error(
+                        f"Import failed. No partial changes were saved: {e}"
+                    )
+
+    # ----------------------------------------------
+    # EXISTING DATABASE RECORDS
+    # ----------------------------------------------
+
+    st.divider()
+
+    st.markdown("### Existing Database Records")
+
+    vendor_tab, po_tab, item_tab = st.tabs(
+        ["Vendors", "Purchase Orders", "PO Line Items"]
+    )
+
+    with vendor_tab:
+
+        if vendors_existing:
+            st.dataframe(
+                pd.DataFrame(vendors_existing),
+                use_container_width=True,
+                hide_index=True,
+            )
+        else:
+            st.info("No vendors registered yet.")
+
+    with po_tab:
+
+        if pos_existing:
+            st.dataframe(
+                pd.DataFrame(pos_existing),
+                use_container_width=True,
+                hide_index=True,
+            )
+        else:
+            st.info("No purchase orders registered yet.")
+
+    with item_tab:
+
+        if items_existing:
+            st.dataframe(
+                pd.DataFrame(items_existing),
+                use_container_width=True,
+                hide_index=True,
+            )
+        else:
+            st.info("No PO line items registered yet.")
