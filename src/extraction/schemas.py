@@ -1,7 +1,7 @@
 
 from datetime import date
 from decimal import Decimal
-from typing import Optional, Literal
+from typing import Optional, Literal, Any
 from pydantic import (
     BaseModel,
     Field,
@@ -74,4 +74,4 @@ class InvoiceData(BaseModel):
     ] = "UNKNOWN"
 
     # Evidence for important extracted fields
-    evidence: dict[str, FieldEvidence] = Field(default_factory=dict)
+    evidence: dict[str, Any] = Field(default_factory=dict)
