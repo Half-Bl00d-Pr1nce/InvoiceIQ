@@ -96,8 +96,8 @@ def extract_invoice_data_with_backend(invoice_text: str):
 
         except Exception as groq_error:
             raise RuntimeError(
-                f"Invoice extraction failed with both Ollama and Groq.\n"
-                f"Ollama error: {ollama_error}\n"
+                "Invoice extraction failed with both Ollama and Groq. "
+                f"Ollama error: {ollama_error}; "
                 f"Groq error: {groq_error}"
             ) from groq_error
 

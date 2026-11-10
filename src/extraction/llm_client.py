@@ -96,6 +96,14 @@ def generate_with_groq(system_prompt: str, user_prompt: str, schema: dict) -> st
         timeout=90
     )
 
-    response.raise_for_status()
+    if not response.ok:
+        try:
+            error_detail = response.json()
+        except ValueError:
+            error_detail = response.text
+
+        raise RuntimeError(
+            f"Groq API Error ({response.status_code}): {error_detail}"
+        )
 
     return response.json()["choices"][0]["message"]["content"]
