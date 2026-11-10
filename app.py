@@ -1389,8 +1389,13 @@ elif page == "Process Invoice":
 
                     except Exception as error:
 
-                        st.error("Invoice processing failed.")
-                        st.exception(error)
+                        print(f"Invoice processing error: {error}")
+
+                        st.error(
+                            "We couldn't process this invoice at the moment. "
+                            "Please try again shortly. If the issue persists, "
+                            "contact the administrator."
+                        )
 
     # ----------------------------------------------
     # RIGHT COLUMN: PROCESSING STEPS
