@@ -1,434 +1,474 @@
 # InvoiceIQ — AI-Assisted Invoice Processing & Exception Investigation
 
-## 1. Project Overview
+InvoiceIQ is an end-to-end invoice verification application built for **Problem Statement 1 (PS-1)**. It automates the initial accounts-payable checks performed when supplier invoices are received: document extraction, vendor verification, purchase-order matching, financial validation, duplicate detection and exception identification.
 
-InvoiceIQ is an AI-assisted invoice processing system designed to automate the extraction, verification and validation of supplier invoices.
+The core design principle is simple: **AI understands the invoice; deterministic Python rules validate it and determine the outcome.** The LLM does not approve invoices or make financial decisions.
 
-In a typical organisation, finance teams receive invoices in different PDF formats, manually extract invoice details, compare them against purchase orders, verify vendor information and investigate discrepancies. This process can be time-consuming and prone to human error.
+## 1. Problem and Solution
 
-InvoiceIQ addresses this problem through an automated processing pipeline that combines local Large Language Model (LLM) extraction with deterministic business-rule validation.
+Supplier invoices arrive in different layouts and formats. They may be digitally generated, scanned or contain a mixture of both. Important information can appear in different places, line items may be bundled or itemised, tax may be included in prices or shown separately, and PO references may be explicit or missing.
 
-The system extracts structured information from invoice PDFs, validates the extracted data against vendor and purchase order records, performs financial checks and assigns a final processing decision.
+InvoiceIQ addresses this workflow through a modular processing pipeline. It extracts invoice information from PDF documents, validates the extracted fields against vendor and purchase-order reference data, checks financial and item-level consistency, and produces one of three outcomes:
 
-**The central design principle is that AI extracts and interprets invoice information, while deterministic Python logic performs financial calculations and makes the final decision.**
+| Outcome | Meaning |
+|---|---|
+| `APPROVED` | Required validation checks pass. |
+| `REJECTED` | A blocking issue, such as an unregistered vendor or confirmed duplicate, is identified. |
+| `PENDING_REVIEW` | An ambiguity, discrepancy or incomplete validation needs human investigation. |
+
+A potential duplicate or uncertain match is treated as an exception to investigate, not automatically as proof of fraud or duplication.
 
 ## 2. Key Features
 
-- **PDF Invoice Ingestion:** Supports digital, scanned and mixed-content PDF documents.
-- **OCR Processing:** Uses Tesseract OCR to extract text from scanned invoice pages.
-- **LLM-Based Extraction:** Uses a locally hosted Qwen2.5 model to extract structured invoice information.
-- **Structured Data Validation:** Uses Pydantic schemas to validate extracted invoice fields.
-- **Vendor Verification:** Checks vendor identity and registration details against the approved vendor master.
-- **Purchase Order Matching:** Supports explicit PO matching and suggests candidates when a PO reference is missing.
-- **Item-Level Reconciliation:** Compares invoice descriptions, item codes, quantities and prices against purchase order details.
-- **Financial Validation:** Checks subtotal calculations, tax amounts, invoice totals and PO-related tax expectations.
-- **Duplicate Detection:** Identifies duplicate invoices using file hashes and invoice-related information.
-- **Cumulative Billing Validation:** Tracks invoices billed against a purchase order to identify quantity and monetary limit violations.
-- **Exception Handling:** Routes uncertain or inconsistent invoices for human review.
-- **Audit Trail:** Stores processing information, validation results and invoice decisions in SQLite.
-- **Interactive Dashboard:** Provides an overview of invoice processing activity and decision status.
+- **PDF invoice intake:** Accepts digital, scanned and mixed-content PDF invoices.
+- **Document routing:** Uses PyMuPDF for digital text extraction and Tesseract OCR for scanned pages.
+- **LLM-assisted extraction:** Uses Qwen2.5 through Ollama when available, with Groq as a fallback backend.
+- **Structured extraction:** Uses Pydantic to validate the extracted invoice fields and line items. Evidence can retain flexible source structures returned by the model.
+- **Vendor verification:** Checks supplier identity and registration information against the vendor master.
+- **PO matching:** Validates explicit PO references and identifies possible candidates when a reference is absent or unclear.
+- **Item reconciliation:** Compares invoice item descriptions/codes, quantities and unit prices with PO line items.
+- **Financial validation:** Checks line arithmetic, subtotal, tax, invoice total and configured tolerances.
+- **Duplicate detection:** Uses file-level and invoice-level signals to identify exact or potential duplicates.
+- **Cumulative billing checks:** Considers previously processed invoices against PO quantity and value limits, helping identify split-invoice overbilling.
+- **Human-in-the-loop handling:** Sends uncertain or inconsistent cases to `PENDING_REVIEW` instead of guessing.
+- **Reference-data management:** Provides a Manage Database page for uploading, previewing, validating and importing vendor and PO CSV data.
+- **Audit history and dashboard:** Uses SQLite to store processing records and validation information for application history and dashboard views.
+- **Resilient Groq requests:** Retries selected transient failures, including Groq JSON-generation validation failures, up to three attempts when that retry logic is enabled in `llm_client.py`.
+- **Automated tests:** Includes a pytest suite for core modules and regression checks.
 
-## 3. System Architecture
+## 3. Application Pages
 
-InvoiceIQ follows a modular processing architecture.
+### Dashboard
+
+Provides a summary of invoice processing activity, decision statuses and recent processing history.
+
+### Process Invoice
+
+Accepts a PDF invoice and runs the extraction and validation pipeline. The results are organised into:
+
+- **Overview:** Invoice summary and final decision.
+- **Extracted Fields:** Structured invoice and vendor information returned by extraction.
+- **Validation Details:** Individual checks and their outcomes.
+- **Decision Explanation:** Reasons supporting the final status.
+
+### Manage Database
+
+Allows the user to manage the reference data used during verification. Vendor and purchase-order CSV uploads are validated and previewed before the user explicitly confirms an import. The page also displays the currently loaded reference records.
+
+## 4. System Architecture
 
 ```text
-                 Invoice PDF Upload
-                         |
-                         v
-                 Document Ingestion
-                         |
-                         v
-              Document Type Detection
-                         |
-             +-----------+-----------+
-             |                       |
-             v                       v
-       Digital Extraction       OCR Processing
-          (PyMuPDF)             (Tesseract)
-             |                       |
-             +-----------+-----------+
-                         |
-                         v
-                Extracted Text
-                         |
-                         v
-               LLM-Based Extraction
-                 (Ollama + Qwen)
-                         |
-                         v
-              Structured Data Schema
-                    (Pydantic)
-                         |
-                         v
-                Validation Pipeline
-                         |
-          +--------------+--------------+
-          |              |              |
-          v              v              v
-     Duplicate       Vendor Check    PO Matching
-     Detection                       & Matching
-          |              |              |
-          +--------------+--------------+
-                         |
-                         v
-                Financial Validation
-                         |
-                         v
-                Item Reconciliation
-                         |
-                         v
-                 Decision Engine
-                         |
-             +-----------+-----------+
-             |           |           |
-             v           v           v
-          APPROVED    REJECTED   PENDING_REVIEW
-             |           |           |
-             +-----------+-----------+
-                         |
-                         v
-                SQLite Audit Storage
-                         |
-                         v
-                 Streamlit Dashboard
+                         PDF Invoice Upload
+                                  |
+                                  v
+                          Document Router
+                                  |
+                    +-------------+-------------+
+                    |                           |
+                    v                           v
+             Digital PDF Text                Scanned Page
+               (PyMuPDF)                   (Tesseract OCR)
+                    |                           |
+                    +-------------+-------------+
+                                  |
+                                  v
+                           Extracted Text
+                                  |
+                                  v
+                         LLM Extraction Layer
+                                  |
+                      +-----------+-----------+
+                      |                       |
+                      v                       v
+                 Ollama / Qwen             Groq API
+                 (primary)                (fallback)
+                      |                       |
+                      +-----------+-----------+
+                                  |
+                                  v
+                         Structured JSON
+                                  |
+                                  v
+                         Pydantic Validation
+                                  |
+                                  v
+                      Deterministic Validation
+                                  |
+          +-----------------------+-----------------------+
+          |            |           |          |           |
+          v            v           v          v           v
+       Vendor       PO Match    Duplicate  Financial    Item-level
+       Checks                   Checks     Checks    Reconciliation
+          |            |           |          |           |
+          +------------+-----------+----------+-----------+
+                                  |
+                                  v
+                            Decision Engine
+                                  |
+                 +----------------+----------------+
+                 |                |                |
+                 v                v                v
+              APPROVED          REJECTED      PENDING_REVIEW
+                 |                |                |
+                 +----------------+----------------+
+                                  |
+                                  v
+                         SQLite Audit Storage
+                                  |
+                                  v
+                        Streamlit Dashboard
 ```
 
 ### Processing Workflow
 
-1. The user uploads an invoice PDF through the Streamlit interface.
-2. The document router identifies whether each page contains digital text or requires OCR.
-3. PyMuPDF extracts digital text, while Tesseract processes scanned pages.
-4. The extracted text is passed to the local Qwen2.5 model.
-5. The LLM returns structured invoice information, which is validated using Pydantic.
-6. The validation modules check duplicates, vendor details, PO references, item information and financial calculations.
-7. The decision engine evaluates the validation results and assigns the final invoice status.
-8. Processing information and validation results are stored in SQLite.
-9. The dashboard displays invoice activity and processing decisions.
+1. The user uploads a PDF through the Streamlit interface.
+2. The document router determines whether pages contain extractable digital text or need OCR.
+3. PyMuPDF extracts digital text; Tesseract OCR processes scanned pages.
+4. The extracted text is sent to the LLM extraction layer. The application attempts Ollama first and falls back to Groq if the primary backend is unavailable or fails.
+5. The model returns structured invoice data. Pydantic validates the result against the invoice schema.
+6. Python validation modules check vendor details, PO matching, duplicates, financial values and item-level reconciliation.
+7. The decision engine applies the configured business rules and assigns the final status.
+8. Processing details and validation outcomes are written to SQLite.
+9. The dashboard displays the resulting activity and decision information.
 
-## 4. Technology Stack
+## 5. Technology Stack
 
 | Component | Technology | Purpose |
 |---|---|---|
-| Programming Language | Python | Core application logic |
-| Frontend | Streamlit | Interactive dashboard and invoice processing interface |
-| PDF Processing | PyMuPDF | Digital PDF text extraction |
-| OCR | Tesseract OCR | Scanned document text extraction |
-| LLM | Qwen2.5 1.5B | Structured invoice information extraction |
-| LLM Runtime | Ollama | Local model execution |
-| Data Validation | Pydantic | Structured schema validation |
-| Data Processing | Pandas | Reference data and tabular operations |
-| Database | SQLite | Invoice records and audit information |
+| Programming language | Python | Core application and business logic |
+| Frontend | Streamlit | Dashboard, invoice processing and reference-data interface |
+| PDF processing | PyMuPDF | Digital PDF text extraction |
+| OCR | Tesseract OCR | Text extraction from scanned pages |
+| Primary LLM runtime | Ollama | Local model execution |
+| Primary local model | Qwen2.5 1.5B | Structured invoice information extraction |
+| Fallback LLM | Groq API | Hosted extraction when Ollama is unavailable or fails |
+| Fallback model | Configurable; default `openai/gpt-oss-20b` | Structured invoice extraction through Groq |
+| Data validation | Pydantic | Invoice schema and field validation |
+| Data processing | Pandas | Reference-data and tabular operations |
+| Database | SQLite | Invoice processing records, reference data and audit information |
 | Configuration | YAML | Business rules and processing thresholds |
-| Testing | Pytest | Unit and regression testing |
-| Visualization | Plotly | Dashboard visualizations |
+| Visualization | Plotly | Dashboard charts |
+| Testing | Pytest | Unit and regression tests |
 
-## 5. Project Structure
+## 6. Project Structure
+
+The main modules are organised as follows. Individual repositories may contain additional helper files or tests.
 
 ```text
 InvoiceIQ/
-│
 ├── app.py
 ├── setup_database.py
 ├── requirements.txt
 ├── README.md
-│
 ├── config/
 │   └── rules.yaml
-│
 ├── data/
 │   ├── invoices/
 │   ├── vendors.csv
 │   ├── purchase_orders.csv
 │   └── invoiceiq.db
-│
 ├── src/
 │   ├── ingestion/
 │   │   ├── pdf_reader.py
 │   │   ├── ocr_engine.py
 │   │   └── document_router.py
-│   │
 │   ├── extraction/
+│   │   ├── llm_client.py
 │   │   ├── llm_extractor.py
 │   │   ├── prompts.py
 │   │   └── schemas.py
-│   │
 │   ├── matching/
 │   │   ├── po_matcher.py
 │   │   ├── semantic_matcher.py
 │   │   └── item_reconciler.py
-│   │
 │   ├── validation/
 │   │   ├── financial_checks.py
 │   │   ├── duplicate_detector.py
 │   │   ├── vendor_checks.py
 │   │   └── anomaly_detector.py
-│   │
 │   ├── decision/
 │   │   ├── rules_engine.py
 │   │   └── explanation.py
-│   │
 │   └── database/
 │       ├── db.py
 │       └── repository.py
-│
 ├── tests/
-│
 └── sample_invoices/
 ```
 
-*Note: The structure above describes the main project modules. Additional scripts and test files may be present.*
-
-## 6. Installation and Setup
+## 7. Local Installation and Setup
 
 ### Prerequisites
 
-Install the following before running InvoiceIQ:
-
 - Python 3.10 or later
-- Ollama
-- Tesseract OCR
+- Tesseract OCR installed and available to the application
+- Ollama installed, if using the local primary extraction backend
+- A Groq API key, if using the fallback backend
 - Git (optional, for cloning the repository)
 
-### Step 1: Clone the Repository
+### 1. Clone the repository
 
 ```bash
-git clone <YOUR_GITHUB_REPOSITORY_URL>
+git clone https://github.com/Half-Bl00d-Pr1nce/InvoiceIQ.git
 cd InvoiceIQ
 ```
 
-Alternatively, download the project and open its root directory in a terminal.
+### 2. Create and activate a virtual environment
 
-### Step 2: Create a Virtual Environment
-
-For Windows:
+**Windows**
 
 ```bash
 python -m venv venv
 venv\Scripts\activate
 ```
 
-For Linux/macOS:
+**Linux/macOS**
 
 ```bash
 python3 -m venv venv
 source venv/bin/activate
 ```
 
-### Step 3: Install Dependencies
+### 3. Install Python dependencies
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### Step 4: Install and Configure Tesseract OCR
+### 4. Install Tesseract OCR
 
-Install Tesseract OCR and ensure it is available in your system PATH.
+Install Tesseract OCR for your operating system and make sure its executable is available in the system PATH. On Windows, configure the executable path in the OCR configuration/module if it is not detected automatically.
 
-On Windows, if necessary, configure the executable location in the OCR module.
+### 5. Configure Ollama
 
-### Step 5: Install and Start Ollama
-
-Install Ollama from:
-
-https://ollama.com/
-
-Pull the model:
+Install Ollama from [ollama.com](https://ollama.com/) and download the configured local model:
 
 ```bash
 ollama pull qwen2.5:1.5b
 ```
 
-Ensure the Ollama service is running before starting invoice processing.
+Make sure the Ollama service is running before processing invoices locally.
 
-## 7. Database Setup
+### 6. Configure the Groq fallback
 
-InvoiceIQ uses SQLite to store invoice records, validation results, processing logs and reference information.
+Set the following environment variables in a local `.env` file or your environment. Keep credentials out of source control.
 
-The reference data is maintained in:
+```env
+GROQ_API_KEY=your_groq_api_key
+GROQ_MODEL=openai/gpt-oss-20b
+```
 
-- `data/vendors.csv`
-- `data/purchase_orders.csv`
+Optional settings are:
 
-Run the database setup script:
+```env
+OLLAMA_BASE_URL=http://localhost:11434
+OLLAMA_MODEL=qwen2.5:1.5b
+GROQ_API_URL=https://api.groq.com/openai/v1/chat/completions
+```
+
+The application reads Streamlit secrets when available and otherwise falls back to environment variables. Do not commit `.env` files or expose API keys in screenshots, logs or the repository.
+
+## 8. Database Setup
+
+InvoiceIQ uses SQLite as its lightweight relational database. It stores application data used for invoice processing, reference data and audit/history views.
+
+The reference data includes vendor and purchase-order records. In a local setup, the repository may provide CSV files under `data/`. To initialise the database and load the default reference data, run:
 
 ```bash
 python setup_database.py
 ```
 
-This initializes the database and loads the vendor and purchase order reference data.
+The Manage Database page also supports uploading vendor and PO CSV files, validating them, previewing the data and explicitly confirming the import.
 
-## 8. Running the Application
+**Deployment note:** SQLite is file-based. On a local machine, the database file remains on disk unless it is removed. On hosted environments such as Streamlit Community Cloud, local application storage may be ephemeral and can reset after a restart or redeployment. Do not treat the deployed SQLite file as permanent production storage. For durable multi-user operation, use a managed persistent database.
 
-After completing the installation and database setup, start the Streamlit application:
+## 9. Running the Application
+
+Start the app from the project root:
 
 ```bash
 streamlit run app.py
 ```
 
-Open the local URL displayed in the terminal, typically:
+Open the local address printed by Streamlit, typically:
 
 ```text
 http://localhost:8501
 ```
 
-### Application Workflow
+### Basic application workflow
 
-1. Open the Dashboard to view invoice processing statistics.
-2. Navigate to Process Invoice.
-3. Upload a supplier invoice PDF.
-4. Start the processing workflow.
-5. Review extracted invoice information and validation results.
-6. Inspect the final decision and any exceptions identified.
+1. Open Dashboard to inspect the current processing activity.
+2. Open Manage Database and load the vendor and PO reference data required for the test invoice.
+3. Open Process Invoice and upload a digital, scanned or mixed PDF invoice.
+4. Start processing and allow document extraction and validation to complete.
+5. Review the extracted fields, individual validation results and final decision explanation.
 
-## 9. Business Validation and Decision Logic
+## 10. Streamlit Community Cloud Deployment
 
-InvoiceIQ separates information extraction from business validation.
+InvoiceIQ can be deployed as a Streamlit application. The hosted environment does not automatically have access to an Ollama server running on a developer's computer. In the current Ollama-first configuration, the extraction layer attempts Ollama and then uses Groq as the fallback when Ollama is unavailable.
 
-The LLM is responsible for interpreting invoice documents and extracting structured fields. Python validation modules independently verify the extracted information.
+For a hosted deployment:
 
-### Vendor Validation
+1. Push the project to GitHub.
+2. Create or open the app in Streamlit Community Cloud and point it to the repository and `app.py`.
+3. Ensure the deployment environment has the required Python packages and Tesseract OCR binary available.
+4. In the Streamlit app's **Secrets** settings, configure the credentials and model settings:
 
-- Checks vendor identifiers and GSTIN against the vendor master.
-- Identifies unregistered vendors.
-- Detects conflicts between vendor identifiers.
-- Checks whether the vendor is active.
+```toml
+GROQ_API_KEY = "your_groq_api_key"
+GROQ_MODEL = "openai/gpt-oss-20b"
+```
 
-### Purchase Order Matching
+5. Restart/redeploy the app after changing deployment settings.
+6. Open Manage Database and import the vendor and PO data needed for the demonstration.
+7. Test both a digital PDF and a scanned PDF before sharing the deployment link.
 
-- Validates explicitly supplied PO references.
+Never place the Groq API key directly in `app.py`, commit it to GitHub or include it in the README. The hosted SQLite file may reset, so re-import demo reference data when necessary and avoid relying on it for permanent records.
+
+## 11. Business Validation and Decision Logic
+
+InvoiceIQ separates document understanding from financial and procurement decisions. The LLM extracts the invoice fields; Python modules independently apply the business rules.
+
+### Vendor validation
+
+- Checks vendor identifiers and tax registration details against the vendor master.
+- Identifies vendors that are not registered or are inactive.
+- Detects conflicting vendor identifiers.
+
+### Purchase-order matching
+
+- Validates an explicitly supplied PO reference.
 - Checks PO ownership and status.
-- Suggests possible PO candidates when the reference is missing.
-- Routes ambiguous matches for human review rather than automatically selecting an uncertain PO.
+- Can suggest possible PO candidates when the reference is missing.
+- Routes ambiguous matches for human review rather than selecting an uncertain PO automatically.
 
-### Financial Validation
+### Financial validation
 
-- Verifies line-item arithmetic.
-- Checks subtotal and invoice total calculations.
-- Validates tax amounts and tax treatment.
-- Compares expected PO tax against the invoice tax when sufficient information is available.
+- Checks line-item arithmetic and subtotal calculations.
+- Validates invoice totals and tax amounts.
+- Compares expected PO tax information with invoice tax when sufficient reference data is available.
 - Applies configurable amount tolerances.
 
-### Item Reconciliation
+### Item reconciliation and cumulative billing
 
-- Matches invoice items against PO items.
+- Matches invoice items against PO items using item identifiers and descriptions.
 - Compares quantities and unit prices.
-- Tracks cumulative billing across multiple invoices.
-- Identifies quantity and price mismatches.
-- Avoids automatically allocating bundled invoice items across PO components when the allocation is uncertain.
+- Tracks billed quantity/value across invoices associated with the same PO.
+- Identifies when cumulative billing exceeds the PO quantity or value.
+- Avoids making uncertain allocations for bundled invoice items.
 
-### Duplicate Detection
+### Duplicate detection
 
-Uses multiple checks:
+Uses more than one signal, including:
 
 - Exact file hash comparison.
 - Vendor and invoice number comparison.
 - Vendor, invoice date and amount comparison.
 
-### Final Decision
+A similarity signal can result in a review flag; it is not necessarily proof that two invoices are the same.
 
-The decision engine assigns one of three outcomes:
+### Decision engine
 
-| Decision | Meaning |
-|---|---|
-| APPROVED | Required validations pass and the invoice is eligible for approval. |
-| REJECTED | A blocking issue such as a duplicate or vendor mismatch is identified. |
-| PENDING_REVIEW | A discrepancy, ambiguity or incomplete validation requires human investigation. |
+The decision engine evaluates the validation results and returns `APPROVED`, `REJECTED` or `PENDING_REVIEW`. The LLM does not select the final status.
 
-The final decision is generated through deterministic business rules, not directly by the LLM.
+## 12. Configurable Business Rules
 
-## 10. Configurable Business Rules
-
-InvoiceIQ uses `config/rules.yaml` to maintain configurable processing policies.
-
-Examples include:
+Processing policies are maintained in `config/rules.yaml`. Configurable examples include:
 
 - Required invoice fields.
 - PO matching thresholds.
-- Amount tolerance percentage.
-- Absolute amount tolerance.
+- Percentage and absolute amount tolerances.
 - Duplicate detection settings.
 - Decision outcomes for validation failures.
 
-The demo configuration uses a 2% percentage tolerance with an absolute cap of ₹100, whichever is lower.
+The demonstration configuration uses a **2% percentage tolerance with an absolute cap of ₹100, whichever is lower**. These are configurable case-study assumptions, not universal accounting or procurement standards.
 
-These are configurable demonstration assumptions and should not be interpreted as universal accounting standards.
+## 13. Edge-Case Testing
 
-## 11. Edge-Case Testing
+The project was designed to evaluate several invoice scenarios beyond a straightforward successful invoice.
 
-The system was evaluated against seven controlled invoice scenarios.
-
-| Test | Scenario | Expected/Observed Decision |
+| Test case | Scenario | Intended handling / observed result |
 |---|---|---|
-| EC1 | Split invoicing and cumulative PO quantity limit | First two invoices APPROVED; third PENDING_REVIEW |
-| EC2 | Missing PO reference with multiple plausible matches | PENDING_REVIEW |
-| EC3 | Invoice from an unregistered vendor | REJECTED |
-| EC4 | Invoice unit price higher than the PO price | PENDING_REVIEW |
-| EC5 | Partial invoice with an incorrect unit price | PENDING_REVIEW |
-| EC6 | Incorrect GST amount | Initial implementation exposed a validation gap |
-| EC7 | Incorrect GST rate/amount compared with PO tax expectations | PENDING_REVIEW |
+| EC1 | Split invoices against one PO and cumulative quantity limit | Earlier invoice can pass; a subsequent invoice that takes cumulative billed quantity beyond the PO limit is sent for review. |
+| EC2 | Missing PO reference with multiple plausible matches | `PENDING_REVIEW` rather than guessing the PO. |
+| EC3 | Invoice from an unregistered vendor | `REJECTED`. |
+| EC4 | Invoice unit price higher than the PO price | `PENDING_REVIEW`. |
+| EC5 | Partial invoice with an incorrect unit price | `PENDING_REVIEW`. |
+| EC6 | Incorrect GST amount | Exposed a validation gap in an earlier implementation. |
+| EC7 | Incorrect GST rate/amount compared with PO tax expectations | `PENDING_REVIEW` after the additional PO tax validation check was introduced. |
 
-The GST validation gap identified during EC6 testing was addressed through an additional PO tax validation check and verified using EC7.
+The split-invoice scenario demonstrates why the system checks cumulative billed quantity/value across invoice history rather than validating each invoice in isolation.
 
-The project also includes a regression test suite to check that changes do not break existing functionality.
-
-Run the tests using:
+Run the test suite with:
 
 ```bash
 pytest tests/ -v
 ```
 
-## 12. Design Decisions
+## 14. LLM Fallback and Error Handling
 
-### Local LLM Instead of Cloud APIs
+The extraction layer is designed to try the local Ollama backend first and fall back to Groq if the local backend is unavailable or fails. This makes the same extraction interface usable in a local development environment and in a hosted environment where a local Ollama service is not present.
 
-Ollama and Qwen2.5 are used to run extraction locally. This avoids dependence on paid external LLM APIs and allows the demonstration to run on a local machine.
+The Groq client can retry selected transient failures, including JSON-generation validation failures, up to three attempts with short delays between attempts. Non-retryable API errors are surfaced without repeatedly sending the same request. The retry mechanism improves resilience but cannot guarantee that an external model API will always be available or return valid structured output.
 
-### Deterministic Financial Validation
+At the UI level, an unsuccessful processing attempt should display a user-friendly message rather than exposing a full Python traceback. Technical error information can be inspected in the application logs during debugging.
 
-Financial calculations are performed using Python rather than trusting LLM-generated arithmetic. This improves consistency and makes validation results easier to audit.
+## 15. Design Decisions
 
-### Human-in-the-Loop Exception Handling
+### AI for extraction, Python for decisions
 
-Invoices with ambiguous PO matches, uncertain extraction or financial discrepancies are routed for human review rather than being automatically approved.
+LLMs are useful for interpreting varying invoice layouts and extracting semi-structured information. Financial calculations, reconciliation and final decisions remain deterministic Python operations so they can be tested and explained.
 
-### Modular Architecture
+### Ollama-first with Groq fallback
 
-The application separates ingestion, extraction, matching, validation, decision-making and database operations. This makes individual components easier to test and maintain.
+Ollama supports local inference during development. Groq provides a hosted fallback for environments where a local Ollama service is unavailable. API credentials are stored in environment variables or Streamlit secrets, not source code.
 
-## 13. Limitations and Future Improvements
+### Human review for uncertain cases
 
-The current implementation is a local proof of concept intended to demonstrate an intelligent invoice-processing workflow.
+Ambiguous PO matches, discrepancies, possible duplicates and incomplete data are routed to human review instead of being silently accepted.
 
-Some limitations include:
+### Cumulative checks
 
-- LLM extraction performance can vary depending on invoice layout, scan quality and document complexity.
+PO limits apply across invoices, not just to an individual invoice. Maintaining processing history enables the application to identify split billing that would be missed by invoice-by-invoice checks.
+
+### Modular architecture
+
+Ingestion, extraction, matching, validation, decision-making and database operations are separated into modules, making the system easier to test and maintain.
+
+## 16. Limitations and Future Improvements
+
+InvoiceIQ is a case-study implementation and proof of concept, not a complete production accounts-payable platform.
+
+Current limitations include:
+
+- LLM extraction quality can vary with scan quality, invoice layout, document complexity and model/API availability.
+- OCR accuracy depends on image resolution, skew, contrast and legibility.
+- Retrying selected API errors reduces intermittent failures but cannot eliminate external service failures.
 - Local CPU inference may introduce processing delays.
-- OCR accuracy depends on document quality and readability.
-- Semantic matching uses a lexical similarity baseline and may not capture every contextual relationship.
-- Vendor and PO verification depends on the accuracy of the supplied reference data.
+- Semantic matching may not capture every contextual relationship between invoice and PO descriptions.
+- Validation quality depends on accurate vendor and PO reference data.
 - External ERP, banking and GST verification integrations are not included.
-- Email mailbox integration is not included; PDF uploads simulate invoice intake.
-- Human review is required for ambiguous or unsupported cases.
+- Email mailbox intake is not included; PDF upload is used to simulate invoice intake.
+- Human review remains necessary for ambiguous or unsupported cases.
+- Hosted SQLite storage may be reset and is not intended as durable production storage.
 
 Potential future improvements include:
 
-- Integration with ERP and accounting platforms.
+- Persistent managed database integration for hosted deployments.
+- ERP and accounting platform integration.
 - Email-based invoice intake.
-- More advanced semantic item matching.
-- Improved handling of bundled invoice items.
-- Confidence calibration for extraction and matching.
-- Role-based review workflows and approval tracking.
-- Performance optimisation for larger invoice volumes.
+- More advanced semantic item matching and bundled-item allocation.
+- Extraction confidence calibration and field-level review.
+- Role-based exception review and approval workflows.
+- Monitoring, structured logging and performance optimisation for higher invoice volumes.
 
-## 14. Conclusion
+## 17. Conclusion
 
-InvoiceIQ demonstrates how local LLMs can be integrated with deterministic business logic to automate invoice processing while maintaining control over financial decisions.
+InvoiceIQ demonstrates an AI-assisted approach to invoice processing that combines document extraction with deterministic procurement and financial validation. By supporting digital and scanned PDFs, vendor and PO verification, item reconciliation, cumulative billing checks, duplicate detection and human-in-the-loop exception handling, it provides an end-to-end workflow for the PS-1 case study.
 
-By combining document extraction, vendor verification, purchase order reconciliation, financial validation and exception handling, the system provides a structured approach to reducing manual invoice verification effort.
-
-Rather than relying entirely on AI-generated decisions, InvoiceIQ uses AI for document understanding and Python-based rules for validation and decision-making. This creates a more transparent and auditable workflow suitable for further development into an enterprise invoice-processing solution.
+The key principle remains that **AI assists with understanding the document, while explicit Python rules remain responsible for validation and decisions**. This separation makes the workflow more transparent, explainable and testable.
 
 ---
 
-**Built as an AI-assisted invoice processing and exception investigation case study.**
+**Built as an AI-assisted invoice processing and exception investigation solution for Problem Statement 1 (PS-1).**
